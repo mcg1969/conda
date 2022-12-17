@@ -142,17 +142,19 @@ def _get_client_token():
             log.debug('Unexpected error reading client token: %s', exc)
     else:
         _client_token = _random_token(8)
-        log.debug('Generated new client token: %s', _client_token)
         try:
             with open(cid_file, 'w') as fp:
                 fp.write(_client_token)
                 fp.write('''
-The code above was generated randomly and contains
-no user identifiable content. Conda servers use this
-to better understand individual behavior patterns.''')
+This randomly-generated code contains no information about your
+system, location, or username. Conda servers can use this to
+disaggregate download histories, providing a richer data set
+for the analysis of usage behavior patterns.''')
+            log.debug('Generated new client token: %s', _client_token)
             log.debug('Client token saved: %s', cid_file)
         except Exception as exc:
             log.debug('Unexpected error writing client token file: %s', exc)
+            _client_token = ''
     return _client_token
 
 
