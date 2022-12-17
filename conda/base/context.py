@@ -6,6 +6,7 @@ from collections import OrderedDict
 
 from errno import ENOENT
 from functools import lru_cache
+import getpass
 from itertools import chain
 from logging import getLogger
 from typing import Optional
@@ -177,7 +178,7 @@ def get_user_agent_uuid():
         elif code == 's':
             value = _get_session_token()
         elif code == 'u':
-            value = os.getlogin()
+            value = getpass.getuser()
         elif code == 'h':
             value = platform.node()
         else:
