@@ -124,7 +124,7 @@ def _reset_tokens():
 
 def _random_token(nchar):
     nbytes = (nchar * 6 - 1) // 8 + 1
-    return base64.b64encode(os.urandom(nbytes))[:nchar].decode('ascii')
+    return base64.urlsafe_b64encode(os.urandom(nbytes))[:nchar].decode('ascii')
 
 
 def _get_client_token():
@@ -173,18 +173,24 @@ def get_user_agent_uuid():
     fmt = str(context.client_token).lower()
     fmt = _client_token_formats.get(fmt, fmt)
     for code in fmt:
+        value = ''
         if code == 'c':
             value = _get_client_token()
         elif code == 's':
             value = _get_session_token()
         elif code == 'u':
-            value = getpass.getuser()
+            try:
+                value = getpass.getuser()
+            except Exception as exc:
+                log.debug('getpass.getuser raised an exception: %s' % exc)
         elif code == 'h':
             value = platform.node()
-        else:
-            value = ''
-        parts.append(code + ':' + value)
+            if not value:
+                log.debug('platform.node returned an empty value')
+        if value:
+            parts.append(code + ':' + value)
     _user_agent_uuid = ':'.join(parts)
+    log.debug('User agent uuid: %s', _user_agent_uuid)
     return _user_agent_uuid
 
 
