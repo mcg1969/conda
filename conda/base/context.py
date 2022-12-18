@@ -1,14 +1,17 @@
 # Copyright (C) 2012 Anaconda, Inc
 # SPDX-License-Identifier: BSD-3-Clause
 
+import base64
 from collections import OrderedDict
 
 from errno import ENOENT
 from functools import lru_cache
+import getpass
 from itertools import chain
 from logging import getLogger
 from typing import Optional
 import os
+import re
 from os.path import abspath, expanduser, isdir, isfile, join, split as path_split
 import platform
 import sys
@@ -94,6 +97,64 @@ _arch_names = {
 
 user_rc_path = abspath(expanduser('~/.condarc'))
 sys_rc_path = join(sys.prefix, '.condarc')
+
+
+_client_token_formats = {
+    'none': '',
+    'random': 'cs',
+    'client': 'cs',
+    'session': 's',
+    'username': 'ucs',
+    'hostname': 'hcs',
+    'userhost': 'uhcs'
+}
+_client_token = None
+_session_token = None
+
+
+def _random_token(nchar):
+    nbytes = (nchar * 6 - 1) // 8 + 1
+    return base64.urlsafe_b64encode(os.urandom(nbytes))[:nchar].decode('ascii')
+
+
+def _get_client_token():
+    global _client_token
+    if _client_token is not None:
+        return _client_token
+    cid_file = join(expanduser('~/.conda'), 'client_token')
+    if os.path.exists(cid_file):
+        try_save = False
+        try:
+            # Use just the first line of the file, if it exists
+            _client_token = ''.join(open(cid_file).read().splitlines()[:1])
+            log.debug('Retrieved client token: %s', _client_token)
+        except Exception as exc:
+            log.debug('Unexpected error reading client token: %s', exc)
+    else:
+        _client_token = _random_token(8)
+        try:
+            with open(cid_file, 'w') as fp:
+                fp.write(_client_token)
+                fp.write('''
+This randomly-generated code contains no information about your
+system, location, or username. Conda servers can use this to
+disaggregate download histories, providing a richer data set
+for the analysis of usage behavior patterns.''')
+            log.debug('Generated new client token: %s', _client_token)
+            log.debug('Client token saved: %s', cid_file)
+        except Exception as exc:
+            log.debug('Unexpected error writing client token file: %s', exc)
+            _client_token = ''
+    return _client_token
+
+
+def _get_session_token():
+    global _session_token
+    if _session_token is not None:
+        return _session_token
+    _session_token = _random_token(8)
+    log.debug('Session token generated: %s', _session_token)
+    return _session_token
 
 
 def mockable_context_envs_dirs(root_writable, root_prefix, _envs_dirs):
@@ -259,6 +320,7 @@ class Context(Configuration):
     remote_read_timeout_secs = ParameterLoader(PrimitiveParameter(60.))
     remote_max_retries = ParameterLoader(PrimitiveParameter(3))
     remote_backoff_factor = ParameterLoader(PrimitiveParameter(1))
+    client_token = ParameterLoader(PrimitiveParameter("random"))
 
     add_anaconda_token = ParameterLoader(PrimitiveParameter(True), aliases=('add_binstar_token',))
 
@@ -839,6 +901,32 @@ class Context(Configuration):
         return 2 if self.debug else self._verbosity
 
     @memoizedproperty
+    def client_token_value(self):
+        parts = []
+        fmt = str(self.client_token).lower()
+        fmt = _client_token_formats.get(fmt, fmt)
+        for code in fmt:
+            value = ''
+            if code == 'c':
+                value = _get_client_token()
+            elif code == 's':
+                value = _get_session_token()
+            elif code == 'u':
+                try:
+                    value = getpass.getuser()
+                except Exception as exc:
+                    log.debug('getpass.getuser raised an exception: %s' % exc)
+            elif code == 'h':
+                value = platform.node()
+                if not value:
+                    log.debug('platform.node returned an empty value')
+            if value:
+                parts.append(code + ':' + value)
+        result = ':'.join(parts)
+        log.debug('Client token: %s', result)
+        return result
+
+    @memoizedproperty
     def user_agent(self):
         builder = [f"conda/{CONDA_VERSION} requests/{self.requests_version}"]
         builder.append("%s/%s" % self.python_implementation_name_version)
@@ -859,7 +947,12 @@ class Context(Configuration):
                     exc_info=exc
                 )
             builder.append(user_agent_str)
-        return " ".join(builder)
+        token = self.client_token_value
+        if token:
+            builder.append('token/' + token)
+        result = " ".join(builder)
+        log.debug('Generated user agent string: %s', result)
+        return result
 
     @contextmanager
     def _override(self, key, value):
@@ -994,6 +1087,7 @@ class Context(Configuration):
                 "remote_backoff_factor",
                 "remote_read_timeout_secs",
                 "ssl_verify",
+                "client_token",
             ),
             "Solver Configuration": (
                 "aggressive_update_packages",
@@ -1614,6 +1708,15 @@ class Context(Configuration):
                 to 5. In order to completely suppress channel notices, set this to 0.
                 """
             ),
+            client_token=dals(
+                """
+                Specifies the type of code, if any, to add to the user agent, enabling servers
+                to differentiate between different users. The default is "random", for which
+                conda creates a short random string with no user identifiable content, useful
+                for counting or disaggregation purposes. Other choices include "username",
+                "hostname", and "none".
+                """
+            )
         )
 
 

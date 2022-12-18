@@ -6,6 +6,7 @@ from itertools import chain
 import os
 from os.path import join, abspath
 from pathlib import Path
+import re
 from tempfile import gettempdir
 from unittest import TestCase, mock
 
@@ -461,6 +462,25 @@ class ContextCustomRcTests(TestCase):
 
         pkgs_dirs = _get_expandvars_context("pkgs_dirs", "['${TEST_VAR}']", "/foo")
         assert any("foo" in d for d in pkgs_dirs)
+
+    def test_client_token(self):
+        for param, test_fields in (
+            ('none', ''), ('', ''), ('random', 'cs'), ('client', 'cs'), ('session', 's'),
+            ('hostname', 'hcs'), ('username', 'ucs'), ('userhost', 'uhcs'),
+            ('c', 'c'), ('s', 's'), ('u', 'u'), ('h', 'h')):
+            if test_fields:
+                test_re = [c + ':[^:]+' for c in test_fields]
+                test_re_ct = '^' + ':'.join(test_re) + '$'
+                test_re_ua = '^.*token/' + ':'.join(test_re) + '$'
+            else:
+                test_re_ct = '^$'
+                test_re_ua = '^((?!token/).)*$'
+            string = f"client_token: {param}"
+            reset_context()
+            rd = odict(testdata=YamlRawParameter.make_raw_parameters('testdata', yaml_round_trip_load(string)))
+            context._set_raw_data(rd)
+            assert re.match(test_re_ua, context.user_agent), (param, test_fields)
+            assert re.match(test_re_ct, context.client_token_value), (param, test_fields)
 
 
 class ContextDefaultRcTests(TestCase):
