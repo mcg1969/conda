@@ -110,16 +110,6 @@ _client_token_formats = {
 }
 _client_token = None
 _session_token = None
-_user_agent_uuid = None
-
-
-def _reset_tokens():
-    global _client_token
-    global _session_token
-    global _user_agent_uuid
-    _client_token = None
-    _session_token = None
-    _user_agent_uuid = None
 
 
 def _random_token(nchar):
@@ -165,35 +155,6 @@ def _get_session_token():
     _session_token = _random_token(8)
     log.debug('Session token generated: %s', _session_token)
     return _session_token
-
-
-def get_user_agent_uuid():
-    global _user_agent_uuid
-    if _user_agent_uuid is not None:
-        return _user_agent_uuid
-    parts = []
-    fmt = str(context.client_token).lower()
-    fmt = _client_token_formats.get(fmt, fmt)
-    for code in fmt:
-        value = ''
-        if code == 'c':
-            value = _get_client_token()
-        elif code == 's':
-            value = _get_session_token()
-        elif code == 'u':
-            try:
-                value = getpass.getuser()
-            except Exception as exc:
-                log.debug('getpass.getuser raised an exception: %s' % exc)
-        elif code == 'h':
-            value = platform.node()
-            if not value:
-                log.debug('platform.node returned an empty value')
-        if value:
-            parts.append(code + ':' + value)
-    _user_agent_uuid = ':'.join(parts)
-    log.debug('User agent uuid: %s', _user_agent_uuid)
-    return _user_agent_uuid
 
 
 def mockable_context_envs_dirs(root_writable, root_prefix, _envs_dirs):
@@ -940,6 +901,32 @@ class Context(Configuration):
         return 2 if self.debug else self._verbosity
 
     @memoizedproperty
+    def client_token_value(self):
+        parts = []
+        fmt = str(self.client_token).lower()
+        fmt = _client_token_formats.get(fmt, fmt)
+        for code in fmt:
+            value = ''
+            if code == 'c':
+                value = _get_client_token()
+            elif code == 's':
+                value = _get_session_token()
+            elif code == 'u':
+                try:
+                    value = getpass.getuser()
+                except Exception as exc:
+                    log.debug('getpass.getuser raised an exception: %s' % exc)
+            elif code == 'h':
+                value = platform.node()
+                if not value:
+                    log.debug('platform.node returned an empty value')
+            if value:
+                parts.append(code + ':' + value)
+        result = ':'.join(parts)
+        log.debug('Client token: %s', result)
+        return result
+
+    @memoizedproperty
     def user_agent(self):
         builder = [f"conda/{CONDA_VERSION} requests/{self.requests_version}"]
         builder.append("%s/%s" % self.python_implementation_name_version)
@@ -960,9 +947,9 @@ class Context(Configuration):
                     exc_info=exc
                 )
             builder.append(user_agent_str)
-        client_token = get_user_agent_uuid()
-        if client_token:
-            builder.append('token/' + client_token)
+        token = self.client_token_value
+        if token:
+            builder.append('token/' + token)
         result = " ".join(builder)
         log.debug('Generated user agent string: %s', result)
         return result
